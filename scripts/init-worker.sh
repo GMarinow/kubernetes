@@ -8,6 +8,9 @@ read -p "Enter Kubernetes version (e.g., 1.32): " K8S_VERSION
 # Ask user for Master Node IP
 read -p "Enter Master Node IP: " MASTER_IP
 
+# Ask user for sudo password for Master Node
+read -p "Enter sudo password for Master Node: " SUDO_PASSWORD
+
 # Update and upgrade system
 echo "Updating and upgrading the system..."
 sudo apt-get update && sudo apt-get upgrade -y
@@ -87,7 +90,7 @@ while true; do
     # Check if there is any "NotReady" status
     if ! echo "$STATUS" | grep -q "NotReady"; then
         echo "All control-plane nodes are ready. Fetching join command..."
-        JOIN_COMMAND=$(ssh -o StrictHostKeyChecking=no $MASTER_IP "sudo kubeadm token create --print-join-command")
+        JOIN_COMMAND=$(ssh -o StrictHostKeyChecking=no $MASTER_IP "echo $SUDO_PASSWORD | sudo -S kubeadm token create --print-join-command")
         echo "Executing join command on this worker node..."
         sudo $JOIN_COMMAND
         echo "Worker node successfully joined the cluster!"

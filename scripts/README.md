@@ -1,2 +1,2 @@
-chmod +x *.sh
-sudo ./*.sh
+chmod +x init-.sh
+sudo ./init-.sh

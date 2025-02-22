@@ -142,3 +142,64 @@ echo "[INFO] Run the following command on worker nodes to join the cluster:"
 echo "$JOIN_COMMAND"
 
 echo "[INFO] Master node setup complete!"
+
+# Ask user if they want to deploy Cloudflare Tunnel
+read -p "Do you want to deploy Cloudflare Tunnel (y/n)? " DEPLOY_CLOUDFLARED
+
+if [[ "$DEPLOY_CLOUDFLARED" == "y" || "$DEPLOY_CLOUDFLARED" == "Y" ]]; then
+  # Prompt user for the Cloudflare Tunnel token
+  read -p "Enter your Cloudflare Tunnel token: " CLOUDFLARED_TOKEN
+
+  # Check if the token is empty
+  if [ -z "$CLOUDFLARED_TOKEN" ]; then
+    echo "Error: Token cannot be empty"
+    exit 1
+  fi
+
+  # Create the Kubernetes namespace for Cloudflare if it doesn't exist
+  kubectl get namespace cloudflared > /dev/null 2>&1
+  if [ $? -ne 0 ]; then
+    echo "Namespace 'cloudflared' does not exist. Creating it now..."
+    kubectl create namespace cloudflared
+  fi
+
+  # Create the Kubernetes deployment file with the provided token
+  cat <<EOF > cloudflared-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: cloudflared
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          args:
+            - tunnel
+            - --no-autoupdate
+            - run
+            - --token
+            - "$CLOUDFLARED_TOKEN"
+EOF
+
+  # Deploy Cloudflare Tunnel
+  echo "[INFO] Deploying Cloudflare Tunnel to the Kubernetes cluster..."
+  kubectl apply -f cloudflared-deployment.yaml -n cloudflared
+
+  # Check if the deployment was successful
+  if [ $? -eq 0 ]; then
+    echo "[INFO] Cloudflare Tunnel deployment was successful."
+  else
+    echo "[ERROR] Deployment failed. Please check the logs for errors."
+    exit 1
+  fi
+fi

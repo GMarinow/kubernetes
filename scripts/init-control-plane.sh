@@ -2,99 +2,68 @@
 
 set -e  # Exit immediately if a command exits with a non-zero status
 
-# Ask user for Kubernetes version
-echo "[INFO] Asking user for Kubernetes version..."
-read -p "Enter Kubernetes version (e.g., 1.32): " K8S_VERSION
+read -p "Enter the Kubernetes version (e.g., v1.32): " KUBE_VERSION
+read -p "Enter the control plane endpoint: " CONTROL_PLANE_ENDPOINT
+read -p "Enter the node name: " NODE_NAME
 
-# Ask user for control plane endpoint and node name
-echo "[INFO] Asking user for Control Plane Endpoint and Node Name..."
-read -p "Enter Control Plane Endpoint (e.g., 192.168.2.230): " CONTROL_PLANE_ENDPOINT
-read -p "Enter Node Name (should be the computer name): " NODE_NAME
 
-# Update and upgrade system
-echo "[INFO] Updating and upgrading the system..."
-sudo apt-get update && sudo apt-get upgrade -y
+log() {
+    echo "[INFO] $1"
+}
 
-# Disable swap
-echo "[INFO] Disabling swap..."
-sudo swapoff -a
-echo "[INFO] Commenting out swap in /etc/fstab..."
-sudo sed -i '/ swap / s/^/#/' /etc/fstab
+error_exit() {
+    echo "[ERROR] $1" >&2
+    exit 1
+}
 
-# Configure sysctl for Kubernetes networking
-echo "[INFO] Configuring sysctl for Kubernetes networking..."
-cat <<EOF | sudo tee /etc/sysctl.d/k8s.conf
-net.ipv4.ip_forward = 1
-EOF
+log "Updating and upgrading system packages..."
+sudo apt-get update && sudo apt-get upgrade -y || error_exit "Failed to update system packages."
 
-# Apply sysctl settings
-echo "[INFO] Applying sysctl settings..."
-sudo sysctl --system
+log "Disabling swap..."
+sudo swapoff -a || error_exit "Failed to disable swap."
+sudo sed -i '/swap/s/^/#/' /etc/fstab || error_exit "Failed to update /etc/fstab."
 
-# Verify sysctl setting
-echo "[INFO] Verifying sysctl setting..."
-sysctl net.ipv4.ip_forward
+log "Configuring sysctl for Kubernetes..."
+echo -e "net.bridge.bridge-nf-call-ip6tables = 1\nnet.bridge.bridge-nf-call-iptables = 1\nnet.ipv4.ip_forward = 1" | sudo tee /etc/sysctl.d/kubernetes.conf
 
-# Load necessary kernel module
-echo "[INFO] Loading br_netfilter kernel module..."
+log "Loading kernel modules for containerd..."
+echo -e "overlay\nbr_netfilter" | sudo tee /etc/modules-load.d/containerd.conf
+
+sudo modprobe overlay
 sudo modprobe br_netfilter
 
-# Ensure module loads on boot
-echo "[INFO] Ensuring br_netfilter loads on boot..."
-echo 'br_netfilter' | sudo tee /etc/modules-load.d/br_netfilter.conf
+log "Applying sysctl settings..."
+sudo sysctl --system || error_exit "Failed to apply sysctl settings."
 
-# Install containerd
-echo "[INFO] Installing containerd..."
-sudo apt install containerd -y
+log "Installing containerd..."
+sudo apt install containerd -y || error_exit "Failed to install containerd."
 sudo mkdir -p /etc/containerd
 containerd config default | sudo tee /etc/containerd/config.toml
+sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml || error_exit "Failed to configure containerd."
+sudo systemctl restart containerd || error_exit "Failed to restart containerd."
 
-# Modify containerd config to use SystemdCgroup
-echo "[INFO] Modifying containerd config to use SystemdCgroup..."
-sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-
-# Restart containerd service
-echo "[INFO] Restarting containerd service..."
-sudo systemctl restart containerd
-
-# Install necessary packages
-echo "[INFO] Installing necessary packages..."
-sudo apt-get install -y apt-transport-https ca-certificates curl gpg
-
-# Add Kubernetes repository key
-echo "[INFO] Adding Kubernetes repository key..."
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v$K8S_VERSION/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+log "Installing Kubernetes dependencies..."
+sudo apt-get install -y apt-transport-https ca-certificates curl gpg || error_exit "Failed to install dependencies."
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg || error_exit "Failed to add Kubernetes GPG key."
 sudo chmod 644 /etc/apt/keyrings/kubernetes-apt-keyring.gpg
 
-# Add Kubernetes repository
-echo "[INFO] Adding Kubernetes repository..."
-echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v$K8S_VERSION/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/$KUBE_VERSION/deb/ /" | sudo tee /etc/apt/sources.list.d/kubernetes.list
 sudo chmod 644 /etc/apt/sources.list.d/kubernetes.list
 
-# Update system again
-echo "[INFO] Updating system again..."
+log "Installing Kubernetes components..."
 sudo apt-get update
-
-# Install Kubernetes components
-echo "[INFO] Installing Kubernetes components..."
-sudo apt-get install -y kubelet kubeadm kubectl
-
-# Prevent automatic upgrades of Kubernetes packages
-echo "[INFO] Holding Kubernetes packages..."
+sudo apt-get install -y kubelet kubeadm kubectl || error_exit "Failed to install Kubernetes components."
 sudo apt-mark hold kubelet kubeadm kubectl
 
-echo "[INFO] Kubernetes setup complete!"
+log "Initializing Kubernetes cluster..."
+sudo kubeadm init --control-plane-endpoint "$CONTROL_PLANE_ENDPOINT" --node-name "$NODE_NAME" --pod-network-cidr=10.244.0.0/16 || error_exit "Failed to initialize Kubernetes cluster."
 
-# Initialize Kubernetes master node
-echo "[INFO] Initializing Kubernetes master node..."
-sudo kubeadm init --control-plane-endpoint $CONTROL_PLANE_ENDPOINT --node-name $NODE_NAME --pod-network-cidr=10.244.0.0/16
-
-# Set up kubeconfig for the current user
-echo "[INFO] Setting up kubeconfig for the current user..."
+log "Setting up kubectl for the current user..."
 mkdir -p $HOME/.kube
-sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
-sudo chown $(id -u):$(id -g) $HOME/.kube/config
+sudo cp -i /etc/kubernetes/admin.conf $HOME/.kube/config || error_exit "Failed to copy Kubernetes config."
+sudo chown $(id -u):$(id -g) $HOME/.kube/config || error_exit "Failed to change ownership of Kubernetes config."
 
-# Apply Flannel CNI for networking
-echo "[INFO] Applying Flannel CNI for networking..."
-kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+log "Deploying Flannel network plugin..."
+kubectl apply -f https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml || error_exit "Failed to apply Flannel network configuration."
+
+log "Kubernetes setup completed successfully."

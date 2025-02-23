@@ -56,7 +56,7 @@ sudo apt-get install -y kubelet kubeadm kubectl || error_exit "Failed to install
 sudo apt-mark hold kubelet kubeadm kubectl
 
 log "Initializing Kubernetes cluster..."
-sudo kubeadm init --control-plane-endpoint "$CONTROL_PLANE_ENDPOINT" --node-name "$NODE_NAME" --pod-network-cidr=10.244.0.0/16 || error_exit "Failed to initialize Kubernetes cluster."
+sudo kubeadm init --control-plane-endpoint "$CONTROL_PLANE_ENDPOINT":6443 --node-name "$NODE_NAME" --pod-network-cidr=10.244.0.0/16 || error_exit "Failed to initialize Kubernetes cluster."
 
 log "Setting up kubectl for the current user..."
 mkdir -p $HOME/.kube

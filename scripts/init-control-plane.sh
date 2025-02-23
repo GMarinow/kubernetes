@@ -57,10 +57,6 @@ sudo sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/conf
 echo "[INFO] Restarting containerd service..."
 sudo systemctl restart containerd
 
-# Update system
-echo "[INFO] Updating system again..."
-sudo apt-get update
-
 # Install necessary packages
 echo "[INFO] Installing necessary packages..."
 sudo apt-get install -y apt-transport-https ca-certificates curl gpg
